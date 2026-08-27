@@ -32,9 +32,11 @@ entry:
 # --- Code Hole 2: e_shoff, e_flags, e_ehsize (14 bytes) ---
 .org 0x28
 hole2:
-    mov esi, BUF                        # BUF is used as statbuf
+    mov r13d, BUF                       # r13 = BUF, kept live for the whole run
+                                        # (syscalls preserve it), so every later
+                                        # buffer load is a 3-byte reg copy.
+    mov esi, r13d                       # BUF is used as statbuf
     syscall                             # sys_fstat(1, BUF)
-    mov r13b, [rsi + 25]                # Load stdout st_mode high byte
     jmp hole4
 
 .org 0x36
@@ -107,8 +109,8 @@ code_entry:
     # sys_open(filename=rdi, flags=O_RDONLY (0), mode=0)
     push 2                              # SYS_OPEN = 2
     pop rax
-    xor esi, esi
-    cdq                                 # edx = 0 (since eax = 2 >= 0)
+    xor esi, esi                        # flags = O_RDONLY (0). The mode arg (edx)
+                                        # is ignored without O_CREAT, so no cdq.
     syscall
     test eax, eax
     js .open_error                      # Negative errno returned
@@ -118,7 +120,7 @@ code_entry:
     # sys_fstat(fd=edi, statbuf=&file_end)
     push 5                              # SYS_FSTAT = 5
     pop rax
-    mov esi, BUF
+    mov esi, r13d                       # statbuf = BUF
     syscall
     mov ebx, edi                        # Save fd in ebx
 
@@ -129,12 +131,10 @@ code_entry:
     cmp al, 0x40
     je .dir_error
 
-    # Check circular read, but only if stdout is a regular file (S_IFREG>>8)
-    mov al, r13b
-    and al, 0xf0
-    cmp al, 0x80
-    jne .check_sendfile
-
+    # Circular read check: compare the input file's st_dev/st_ino against
+    # stdout's (captured at startup in r14/r15). No "is stdout a regular file"
+    # gate is needed: a non-regular stdout can never share a (dev,ino) pair with
+    # a regular input file, so the compares below simply won't match.
     cmp r14, [rsi]                      # same st_dev ?
     jne .check_sendfile
     cmp r15, [rsi + 8]                  # same st_ino ?
@@ -143,20 +143,21 @@ code_entry:
     # --- Cold: diagnostics. rsi still holds BUF, so only its low half moves. --
 .circular_error:
     mov si, M_CIRC & 0xffff
-    jmp .report
+    jmp .to_report                      # hop over dir_error's message load
 .dir_error:
     mov si, M_DIR & 0xffff
-    jmp .report
+.to_report:                             # circular_error and dir_error share one
+    jmp .report                         # jump to the diagnostic emitter
 .open_error:
-    # Negative errno in eax: -2=ENOENT, -13=EACCES, -21=EISDIR
+    # open(2) failed; al holds a negative errno: -2=ENOENT, -13=EACCES.
+    # EISDIR is intentionally not handled here: an O_RDONLY open of a directory
+    # SUCCEEDS on Linux, so the directory case is caught later by the fstat
+    # S_IFDIR check (.dir_error), never as an open error.
     mov esi, M_NOENT                    # esi was 0 (open flags), so load in full
     cmp al, -2                          # ENOENT
     je 9f
     mov si, M_ACCES & 0xffff
     cmp al, -13                         # EACCES
-    je 9f
-    mov si, M_DIR & 0xffff
-    cmp al, -21                         # EISDIR
     je 9f
     mov si, M_OPEN & 0xffff             # default: "cannot open file\n"
 9:  xor ebx, ebx                        # No fd was opened, so .done_fd's close
@@ -193,7 +194,7 @@ code_entry:
 .pipe_loop:
     xor eax, eax                        # SYS_READ = 0
     mov edi, ebx
-    mov esi, BUF
+    mov esi, r13d                       # buffer = BUF
     mov edx, 0x10000                    # 64 KB chunk
     syscall
     test eax, eax
@@ -213,7 +214,8 @@ code_entry:
     test eax, eax
     jle 1f                              # Error or 0 bytes written
 
-    add rsi, rax                        # Advance buffer pointer
+    add esi, eax                        # Advance buffer pointer (BUF < 4 GB, so
+                                        # the 32-bit add safely zero-extends rsi)
     sub edx, eax                        # Decrement remaining bytes
     jnz .write_subloop                  # Loop until all bytes written
     jmp .pipe_loop
@@ -223,12 +225,12 @@ code_entry:
 
 .done_fd:
     test ebx, ebx                       # If stdin (0) or failed open (0), do not close
-    jz .next_file
+    jz 1f                               # skip the close, but still advance args
     push 3                              # SYS_CLOSE = 3
     pop rax
     mov edi, ebx
     syscall
-    jmp .next_file
+1:  jmp .next_file                      # single back-edge shared by both paths
 
 # ------------------------------------------------------------------------------
 # .report -- diagnostic emitter, entered by jump from .open_error.
@@ -240,7 +242,7 @@ code_entry:
     inc r12d                            # Exit status = 1 (upper bits already 0)
     push rsi                            # Save error message pointer
 
-    mov edi, BUF                        # Staging area
+    mov edi, r13d                       # Staging area = BUF
     mov eax, 0x3a746163                 # "cat:"
     stosd
     mov al, 0x20                        # " "
@@ -261,7 +263,7 @@ code_entry:
     cmp al, 10
     jne 3b
 
-    mov si, BUF & 0xffff
+    mov esi, r13d                       # rsi = BUF (write buffer + length base)
     mov edx, edi
     sub edx, esi                        # rdx = total staged length
     push 1                              # SYS_WRITE = 1

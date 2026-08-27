@@ -2,18 +2,18 @@
 
 [![CI](https://github.com/Irishsmurf/asm_cat/actions/workflows/ci.yml/badge.svg)](https://github.com/Irishsmurf/asm_cat/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Irishsmurf/asm_cat?color=blue)](https://github.com/Irishsmurf/asm_cat/releases/latest)
-[![Binary Size](https://img.shields.io/badge/binary%20size-534%20bytes-brightgreen)](https://github.com/Irishsmurf/asm_cat)
+[![Binary Size](https://img.shields.io/badge/binary%20size-495%20bytes-brightgreen)](https://github.com/Irishsmurf/asm_cat)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 An ultra-compact, safe, and blazing-fast UNIX `cat` utility written in **x86_64 Linux Assembly** (GNU Assembler Intel syntax).
 
-The entire standalone executable weighs in at just **534 bytes** while providing **circular read protection**, **stderr diagnostics**, **POSIX exit codes**, and **beating GNU `/usr/bin/cat` across all 4 performance metrics** (3x–4x faster).
+The entire standalone executable weighs in at just **495 bytes** while providing **circular read protection**, **stderr diagnostics**, **POSIX exit codes**, and **beating GNU `/usr/bin/cat` across all 4 performance metrics** (3x–4x faster).
 
 ---
 
 ## ⚡ Benchmark Showdown: `asm_cat` vs GNU `/usr/bin/cat`
 
-| Benchmark Metric | GNU `/usr/bin/cat` (39 KB) | `asm_cat` (534 B) | Speedup / Winner |
+| Benchmark Metric | GNU `/usr/bin/cat` (39 KB) | `asm_cat` (495 B) | Speedup / Winner |
 | :--- | :--- | :--- | :--- |
 | **Startup & Small File (1.9 KB)** | `0.583 ms` | **`0.183 ms`** | 🏆 **`asm_cat` (3.2x faster)** |
 | **Piped `stdin` Latency (1.9 KB)** | `0.647 ms` | **`0.204 ms`** | 🏆 **`asm_cat` (3.2x faster)** |
