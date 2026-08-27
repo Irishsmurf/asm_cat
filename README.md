@@ -2,13 +2,13 @@
 
 An ultra-compact, safe, and blazing-fast UNIX `cat` utility written in **x86_64 Linux Assembly** (GNU Assembler Intel syntax).
 
-The entire standalone executable weighs in at just **417 bytes** while providing **circular read protection**, **stderr diagnostics**, **POSIX exit codes**, and **beating GNU `/usr/bin/cat` across all 4 performance metrics** (3x–4x faster).
+The entire standalone executable weighs in at just **560 bytes** while providing **circular read protection**, **stderr diagnostics**, **POSIX exit codes**, and **beating GNU `/usr/bin/cat` across all 4 performance metrics** (3x–4x faster).
 
 ---
 
 ## ⚡ Benchmark Showdown: `asm_cat` vs GNU `/usr/bin/cat`
 
-| Benchmark Metric | GNU `/usr/bin/cat` (39 KB) | `asm_cat` (417 B) | Speedup / Winner |
+| Benchmark Metric | GNU `/usr/bin/cat` (39 KB) | `asm_cat` (560 B) | Speedup / Winner |
 | :--- | :--- | :--- | :--- |
 | **Startup & Small File (1.9 KB)** | `0.583 ms` | **`0.183 ms`** | 🏆 **`asm_cat` (3.2x faster)** |
 | **Piped `stdin` Latency (1.9 KB)** | `0.647 ms` | **`0.204 ms`** | 🏆 **`asm_cat` (3.2x faster)** |
