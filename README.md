@@ -56,12 +56,18 @@ The entire standalone executable weighs in at just **417 bytes** while providing
 
 ---
 
-## Building & Installation
+## Building & Testing
 
-To build:
+To assemble and build:
 
 ```bash
 make
+```
+
+To run the automated test suite (functional verification & performance regression checks):
+
+```bash
+make test
 ```
 
 To install directly to `~/.local/bin/cat`:

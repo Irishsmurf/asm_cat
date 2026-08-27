@@ -1,14 +1,5 @@
 # ==============================================================================
-# Makefile for asm_cat (Ultra-compact 197-byte UNIX 'cat' implementation)
-#
-# Build Strategy:
-# 1. Assemble 'cat.s' using GNU Assembler (as) into an intermediate ELF object.
-# 2. Extract the raw flat machine code and crafted ELF headers from the '.text'
-#    section using 'objcopy -O binary -j .text'.
-# 3. Mark the resulting file executable.
-#
-# This bypasses the standard GNU linker (ld) section padding and ELF metadata
-# overhead, yielding an exact 197-byte standalone executable.
+# Makefile for asm_cat (Ultra-compact, High-Performance UNIX 'cat' in x86_64 ASM)
 # ==============================================================================
 
 # Toolchain definitions
@@ -16,13 +7,14 @@ AS      := as
 OBJCOPY := objcopy
 CHMOD   := chmod
 RM      := rm -f
+PYTHON  := python3
 
 # Target and source file definitions
 TARGET  := cat
 SRCS    := cat.s
 OBJS    := cat.o
 
-# Assembler flags (no special flags needed; code uses .intel_syntax noprefix internally)
+# Assembler flags
 ASFLAGS :=
 
 # Default rule: build the executable
@@ -30,15 +22,17 @@ all: $(TARGET)
 
 # Link / extraction step:
 # Extracts the raw flat binary directly from the .text section of cat.o
-# which already contains the crafted ELF header, PT_LOAD program header, and machine code.
 $(TARGET): $(OBJS)
 	$(OBJCOPY) -O binary -j .text $< $@
 	$(CHMOD) +x $@
 
 # Assembly step:
-# Compiles the assembly source file into an ELF64 object file
 %.o: %.s
 	$(AS) $(ASFLAGS) -o $@ $<
+
+# Test rule: runs functional test suite and performance assertions
+test: $(TARGET)
+	$(PYTHON) test.py
 
 # Install / Uninstall rules
 PREFIX ?= $(HOME)/.local
@@ -52,9 +46,7 @@ uninstall:
 	$(RM) $(BINDIR)/$(TARGET)
 
 # Clean rule:
-# Removes compiled objects and the target executable binary
 clean:
 	$(RM) $(OBJS) $(TARGET)
 
-# Phony targets to prevent conflicts with files named 'all', 'clean', 'install', etc.
-.PHONY: all clean install uninstall
+.PHONY: all clean install uninstall test
