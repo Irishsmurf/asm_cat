@@ -40,10 +40,21 @@ $(TARGET): $(OBJS)
 %.o: %.s
 	$(AS) $(ASFLAGS) -o $@ $<
 
+# Install / Uninstall rules
+PREFIX ?= $(HOME)/.local
+BINDIR ?= $(PREFIX)/bin
+
+install: $(TARGET)
+	mkdir -p $(BINDIR)
+	cp $(TARGET) $(BINDIR)/$(TARGET)
+
+uninstall:
+	$(RM) $(BINDIR)/$(TARGET)
+
 # Clean rule:
 # Removes compiled objects and the target executable binary
 clean:
 	$(RM) $(OBJS) $(TARGET)
 
-# Phony targets to prevent conflicts with files named 'all' or 'clean'
-.PHONY: all clean
+# Phony targets to prevent conflicts with files named 'all', 'clean', 'install', etc.
+.PHONY: all clean install uninstall
