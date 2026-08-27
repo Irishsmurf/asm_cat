@@ -28,13 +28,13 @@ It directly interacts with Linux system calls and has zero external dependencies
 
 ## Building
 
-To assemble and link the binary:
+To build the executable:
 
 ```bash
 make
 ```
 
-The build is heavily optimized for binary size (using `-s -N -O1 --build-id=none` and stripping unnecessary ELF notes/sections), yielding a fully standalone executable of approximately **504 bytes** (with machine code `.text` occupying only ~106 bytes).
+The binary is hand-crafted with an **overlapping ELF64 header** and Program Header (`PT_LOAD`), producing a fully standalone Linux x86_64 executable in just **197 bytes** without sacrificing core functionality (multi-file args, stdin streaming, `-` stdin alias).
 
 To clean up build artifacts:
 
