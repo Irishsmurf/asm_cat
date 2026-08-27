@@ -84,3 +84,11 @@ make clean
 # Pipe input
 echo "Hello, 197-byte Assembly!" | ./cat
 ```
+
+---
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+Copyright (c) 2026 David Kernan
