@@ -176,7 +176,14 @@ def test_performance():
         if os.path.exists(med_path): os.remove(med_path)
         if os.path.exists(large_path): os.remove(large_path)
 
-    print(f"\n{BOLD}{GREEN}ALL FUNCTIONAL AND PERFORMANCE ASSERTIONS PASSED!{RESET}\n")
+    # 3. Binary Size Assertion: Ensure binary stays ultra-compact (< 512 bytes)
+    print(f"\n{BOLD}=== 3. BINARY SIZE REGRESSION SUITE ==={RESET}")
+    bin_size = os.path.getsize(ASM_CAT)
+    print(f"  Current asm_cat size: {bin_size} bytes (Maximum allowed: 512 bytes)")
+    assert bin_size < 512, f"SIZE REGRESSION: Binary size {bin_size} exceeds 512 bytes limit!"
+    print(f"  {GREEN}[PASS]{RESET} Binary size within ultra-compact limit ({bin_size} B / <512 B)")
+
+    print(f"\n{BOLD}{GREEN}ALL FUNCTIONAL, PERFORMANCE, AND SIZE ASSERTIONS PASSED!{RESET}\n")
 
 
 if __name__ == "__main__":
