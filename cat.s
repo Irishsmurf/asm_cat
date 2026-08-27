@@ -19,7 +19,7 @@
 #   symbols, so `as` folds them at assembly time and emits NO relocation --
 #   which is required, since the build objcopy's the unlinked .o directly.
 # - Where rsi is already known to hold an address in the image, only its low
-#   half is reloaded (`mov si, imm16`, 4 bytes). Asserted at the end of file.
+#   half is reloaded (`mov si, imm16`, 4 bytes). See the note at end of file.
 # - Error messages are self-delimiting (each ends in '\n'), so no length needs
 #   to be passed or stored; report_error scans for the terminator.
 # - report_error assembles the whole diagnostic in the I/O buffer and issues a
@@ -151,10 +151,9 @@ code_entry:
     # sys_fstat(fd=ebx, statbuf=&file_end)
     push 5                              # SYS_FSTAT = 5
     pop rax
-    xchg edi, ebx                       # edi = fd, ebx = 5 (restored on syscall/xchg)
-    mov esi, BUF
+    mov edi, ebx                        # edi = fd; ebx still holds it afterwards,
+    mov esi, BUF                        # so no restore is needed
     syscall
-    xchg edi, ebx                       # ebx = fd
 
     # Check if directory. Byte 25 of struct stat is st_mode's high byte, so the
     # S_IFMT nibble can be tested a byte at a time (S_IFDIR>>8 == 0x40).
