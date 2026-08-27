@@ -14,13 +14,11 @@ _start:
 ehdr:
     .byte 0x7f, 'E', 'L', 'F', 2, 1, 1, 0
 
-# --- Code Hole 1: e_ident padding (8 bytes) ---
+# --- Code Hole 1: e_ident padding (8 bytes, 100% packed!) ---
 .org 0x08
 entry:
-    push 5                              # fstat(stdout) to get st_dev and st_ino
-    pop rax
-    inc edi                             # fd = 1
-    jmp hole2                           # Hop to the next hole
+    mov r13d, BUF                       # r13 = BUF, kept live for the whole run
+    jmp hole2                           # Hop to hole 2 (exactly 8 bytes)
 
 .org 0x10
     .word 2                             # e_type = ET_EXEC
@@ -32,9 +30,9 @@ entry:
 # --- Code Hole 2: e_shoff, e_flags, e_ehsize (14 bytes) ---
 .org 0x28
 hole2:
-    mov r13d, BUF                       # r13 = BUF, kept live for the whole run
-                                        # (syscalls preserve it), so every later
-                                        # buffer load is a 3-byte reg copy.
+    push 5                              # SYS_FSTAT = 5
+    pop rax
+    inc edi                             # fd = 1 (stdout)
     mov esi, r13d                       # BUF is used as statbuf
     syscall                             # sys_fstat(1, BUF)
     jmp hole4
@@ -109,8 +107,7 @@ code_entry:
     # sys_open(filename=rdi, flags=O_RDONLY (0), mode=0)
     push 2                              # SYS_OPEN = 2
     pop rax
-    xor esi, esi                        # flags = O_RDONLY (0). The mode arg (edx)
-                                        # is ignored without O_CREAT, so no cdq.
+    xor esi, esi                        # flags = O_RDONLY (0).
     syscall
     test eax, eax
     js .open_error                      # Negative errno returned
@@ -132,9 +129,7 @@ code_entry:
     je .dir_error
 
     # Circular read check: compare the input file's st_dev/st_ino against
-    # stdout's (captured at startup in r14/r15). No "is stdout a regular file"
-    # gate is needed: a non-regular stdout can never share a (dev,ino) pair with
-    # a regular input file, so the compares below simply won't match.
+    # stdout's (captured at startup in r14/r15).
     cmp r14, [rsi]                      # same st_dev ?
     jne .check_sendfile
     cmp r15, [rsi + 8]                  # same st_ino ?
@@ -143,25 +138,23 @@ code_entry:
     # --- Cold: diagnostics. rsi still holds BUF, so only its low half moves. --
 .circular_error:
     mov si, M_CIRC & 0xffff
-    jmp .to_report                      # hop over dir_error's message load
+    jmp .report
+
 .dir_error:
     mov si, M_DIR & 0xffff
-.to_report:                             # circular_error and dir_error share one
-    jmp .report                         # jump to the diagnostic emitter
+    jmp .report
+
 .open_error:
-    # open(2) failed; al holds a negative errno: -2=ENOENT, -13=EACCES.
-    # EISDIR is intentionally not handled here: an O_RDONLY open of a directory
-    # SUCCEEDS on Linux, so the directory case is caught later by the fstat
-    # S_IFDIR check (.dir_error), never as an open error.
-    mov esi, M_NOENT                    # esi was 0 (open flags), so load in full
-    cmp al, -2                          # ENOENT
+    # open(2) failed; al holds negative errno: -2=ENOENT, -13=EACCES.
+    # Load 32-bit address since LOAD_ADDR is 0x400000.
+    mov esi, M_NOENT                    # ENOENT
+    cmp al, -2
     je 9f
-    mov si, M_ACCES & 0xffff
-    cmp al, -13                         # EACCES
+    mov si, M_ACCES & 0xffff            # EACCES
+    cmp al, -13
     je 9f
     mov si, M_OPEN & 0xffff             # default: "cannot open file\n"
-9:  xor ebx, ebx                        # No fd was opened, so .done_fd's close
-                                        # is skipped and it falls to .next_file
+9:  xor ebx, ebx                        # No fd was opened -> close skipped
     jmp .report
 
 .check_sendfile:
@@ -214,8 +207,7 @@ code_entry:
     test eax, eax
     jle 1f                              # Error or 0 bytes written
 
-    add esi, eax                        # Advance buffer pointer (BUF < 4 GB, so
-                                        # the 32-bit add safely zero-extends rsi)
+    add esi, eax                        # Advance buffer pointer
     sub edx, eax                        # Decrement remaining bytes
     jnz .write_subloop                  # Loop until all bytes written
     jmp .pipe_loop
@@ -233,7 +225,7 @@ code_entry:
 1:  jmp .next_file                      # single back-edge shared by both paths
 
 # ------------------------------------------------------------------------------
-# .report -- diagnostic emitter, entered by jump from .open_error.
+# .report -- diagnostic emitter, entered by jump from error paths.
 # Stages "cat: <filename>: <error_msg>" in the I/O buffer and delivers it to
 # STDERR with a single write(2). 
 # Input: rsi = error message (newline-terminated), r8 = filename (NUL-terminated)
@@ -285,10 +277,3 @@ msg_dir:
 msg_circ:
     .ascii "input file is output file\n"
 file_end:
-
-# NOTE: the `mov si, imm16` partial-register address loads above are valid only
-# while the whole image sits inside one 64K window -- i.e. while
-# (file_end - ehdr) < 0x10000, since LOAD_ADDR is 64K-aligned. This cannot be
-# checked with .if here (the .org directives above defer symbol folding), but
-# test.py's binary-size assertion bounds the image at 1024 bytes, which is a
-# far stronger guarantee. Revisit these loads before relaxing that bound.
