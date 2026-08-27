@@ -3,7 +3,7 @@
 Automated Test & Performance Regression Suite for asm_cat.
 
 Tests:
-1. Functional Correctness (stdin, files, multi-file, '-' alias, missing file error, circular read protection).
+1. Functional Correctness (stdin, files, multi-file, '-' alias, missing file error, circular read protection, directories, /proc & /sys pseudo-files).
 2. Performance Benchmark Assertion: Ensures asm_cat beats GNU /usr/bin/cat across all 4 metrics.
 """
 
@@ -66,6 +66,27 @@ def test_functional():
         assert res.returncode == 1, f"Expected returncode 1, got {res.returncode}"
         assert b"cat: cannot open file\n" in res.stderr
         print(f"  {GREEN}[PASS]{RESET} Missing file diagnostics (stderr & exit code 1)")
+
+        # Directory detection
+        res = run_cmd([ASM_CAT, "/tmp"])
+        assert res.returncode == 1, f"Expected returncode 1 for directory, got {res.returncode}"
+        assert b"cat: Is a directory\n" in res.stderr
+        print(f"  {GREEN}[PASS]{RESET} Directory input detection ('cat: Is a directory')")
+
+        # Special /proc and /sys pseudo-files
+        if os.path.exists("/proc/cpuinfo"):
+            res_asm = run_cmd([ASM_CAT, "/proc/cpuinfo"])
+            assert res_asm.returncode == 0
+            assert b"processor" in res_asm.stdout and b"vendor_id" in res_asm.stdout, "/proc/cpuinfo contents missing"
+            assert len(res_asm.stdout) > 1000
+            print(f"  {GREEN}[PASS]{RESET} Special pseudo-file reading (/proc/cpuinfo)")
+
+        if os.path.exists("/sys/devices/system/cpu/online"):
+            res_gnu = run_cmd([GNU_CAT, "/sys/devices/system/cpu/online"])
+            res_asm = run_cmd([ASM_CAT, "/sys/devices/system/cpu/online"])
+            assert res_asm.returncode == 0
+            assert res_asm.stdout == res_gnu.stdout, "/sys pseudo-file output mismatch"
+            print(f"  {GREEN}[PASS]{RESET} Special pseudo-file reading (/sys/...)")
 
         # Circular read protection
         circ_file = tempfile.NamedTemporaryFile(delete=False)

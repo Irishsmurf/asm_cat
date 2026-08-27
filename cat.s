@@ -2,14 +2,19 @@
 # asm_cat: Ultra-compact, Safe & High-Performance UNIX 'cat' in x86_64 Assembly
 #
 # Features:
-# 1. Zero-Copy In-Kernel sys_sendfile (syscall 40) for regular files (>25 GB/s).
-# 2. 64 KB dynamically mapped fallback buffer for pipes/stdin (0 disk penalty).
-# 3. Circular Read / Self-Append Prevention:
+# 1. Zero-Copy In-Kernel sys_sendfile (syscall 40) for regular non-empty files.
+# 2. 64 KB dynamically mapped fallback buffer for pipes/stdin/proc/sys files.
+# 3. Directory Detection:
+#    Detects directory inputs (S_IFDIR) and reports "cat: Is a directory" on stderr
+#    with exit status 1.
+# 4. Special /proc & /sys Pseudo-File Support:
+#    Properly streams dynamic pseudo-files until true EOF without early termination.
+# 5. Circular Read / Self-Append Prevention:
 #    Uses sys_fstat (syscall 5) to inspect (st_dev, st_ino) on stdout (fd 1) and
 #    input files. If both match, aborts with "cat: input file is output file".
-# 4. Standard Diagnostics & Error Handling:
-#    Prints descriptive error messages to stderr (fd 2) and sets non-zero exit.
-# 5. Overlapped ELF64 Headers: Retains compact standalone ELF binary format.
+# 6. Diagnostics & POSIX Exit Codes:
+#    Prints descriptive errors on stderr (fd 2) and exits with code 1 on failure.
+# 7. Overlapped ELF64 Headers: Retains compact standalone ELF binary format.
 # ==============================================================================
 
 .intel_syntax noprefix
@@ -93,10 +98,6 @@ code_entry:
     js .open_error                  # Report open error
     xchg ebx, eax                   # ebx = fd
 
-    # Check for circular read only if stdout is a regular file (S_IFREG = 0x8000)
-    cmp r13w, 0x8000
-    jne .do_sendfile
-
     # sys_fstat(fd=ebx, statbuf=&file_end)
     push 5                          # SYS_FSTAT = 5
     pop rax
@@ -104,17 +105,34 @@ code_entry:
     lea rsi, [rip + file_end]
     syscall
     test eax, eax
-    js .do_sendfile
+    js .pipe_loop
+
+    # Check if input is a directory (st_mode & 0xf000 == 0x4000)
+    mov ax, [rsi + 24]
+    and ax, 0xf000
+    cmp ax, 0x4000                  # S_IFDIR = 0x4000
+    je .dir_error
+
+    # Check for circular read only if stdout is a regular file (S_IFREG = 0x8000)
+    cmp r13w, 0x8000
+    jne .check_sendfile
 
     # If in_file st_dev == stdout st_dev && in_file st_ino == stdout st_ino -> Circular!
     cmp r14, [rsi]
-    jne .do_sendfile
+    jne .check_sendfile
     cmp r15, [rsi + 8]
-    jne .do_sendfile
+    jne .check_sendfile
 
 .circular_error:
     lea rsi, [rip + msg_circ]
     push 26                         # msg_circ_len
+    pop rdx
+    call print_error
+    jmp .done_fd
+
+.dir_error:
+    lea rsi, [rip + msg_dir]
+    push 17                         # msg_dir_len
     pop rdx
     call print_error
     jmp .done_fd
@@ -126,8 +144,15 @@ code_entry:
     call print_error
     jmp .next_file
 
-.do_sendfile:
-    # Fast path: sys_sendfile(out_fd=1, in_fd=ebx, offset=NULL, count=0x7ffff000)
+.check_sendfile:
+    # If file size (st_size at offset 48) == 0, it is likely a /proc or /sys pseudo-file.
+    # sys_sendfile reports 0 bytes on 0-sized pseudo-files.
+    # Fall back immediately to .pipe_loop for dynamic /proc and /sys streaming.
+    cmp qword ptr [rsi + 48], 0
+    jle .pipe_loop
+
+    # Fast path: sys_sendfile loop for regular files (transfers until EOF)
+.sendfile_loop:
     push 40                         # SYS_SENDFILE = 40
     pop rax
     push 1                          # STDOUT = 1
@@ -137,8 +162,12 @@ code_entry:
     mov r10d, 0x7ffff000
     syscall
     test eax, eax
-    jns .done_fd                    # If sendfile succeeded, done!
+    jg .sendfile_loop               # Continue if transferred > 0 bytes
+    jns .done_fd                    # If 0 (clean EOF), done!
 
+# ------------------------------------------------------------------------------
+# High-Throughput Fallback I/O Loop (for stdin pipes, /proc, /sys, pseudo-files)
+# ------------------------------------------------------------------------------
 .pipe_loop:
     # sys_read(fd=ebx, buf=&file_end, count=64KB)
     xor eax, eax                    # SYS_READ = 0
@@ -219,5 +248,8 @@ msg_open:
 
 msg_circ:
     .ascii "input file is output file\n"
+
+msg_dir:
+    .ascii "Is a directory\n"
 
 file_end:
