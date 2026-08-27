@@ -34,6 +34,8 @@ To assemble and link the binary:
 make
 ```
 
+The build is heavily optimized for binary size (using `-s -N -O1 --build-id=none` and stripping unnecessary ELF notes/sections), yielding a fully standalone executable of approximately **504 bytes** (with machine code `.text` occupying only ~106 bytes).
+
 To clean up build artifacts:
 
 ```bash

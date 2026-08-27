@@ -1,8 +1,4 @@
-# Simple naive 'cat' implementation for Linux x86_64 using GNU Assembler (GAS)
-# Supports:
-#   1) Reading from stdin when no arguments are provided or '-' is passed
-#   2) Reading from multiple files passed as command-line arguments
-
+# Size-optimized naive 'cat' implementation for Linux x86_64
 .intel_syntax noprefix
 
 .equ SYS_READ, 0
@@ -10,125 +6,96 @@
 .equ SYS_OPEN, 2
 .equ SYS_CLOSE, 3
 .equ SYS_EXIT, 60
-
-.equ STDIN_FD, 0
-.equ STDOUT_FD, 1
-.equ STDERR_FD, 2
-
-.equ O_RDONLY, 0
 .equ BUF_SIZE, 4096
 
 .section .bss
     .lcomm buffer, BUF_SIZE
 
-.section .rodata
-    err_msg:
-        .ascii "cat: cannot open file\n"
-    .equ ERR_MSG_LEN, . - err_msg
-
 .section .text
 .global _start
 
 _start:
-    # Stack layout on x86_64 entry:
-    # [rsp]       = argc
-    # [rsp + 8]   = argv[0] (program name)
-    # [rsp + 16]  = argv[1] ...
-    mov r12, [rsp]         # r12 = argc
-    lea r13, [rsp + 16]    # r13 = &argv[1]
+    pop rbx                # rbx = argc
+    pop rax                # pop argv[0] (program name)
+    dec ebx                # ebx = number of file arguments
+    jnz .arg_loop
 
-    # If argc <= 1 (no file arguments), read from stdin
-    cmp r12, 1
-    jle .read_stdin_only
-
-    # Loop through arguments
-.arg_loop:
-    cmp r12, 1
-    jle .exit_success
-
-    mov rdi, [r13]         # rdi = current argv[i] pointer
-    
-    # Check if argument is "-" (stdin alias)
-    cmp byte ptr [rdi], '-'
-    jne .open_regular_file
-    cmp byte ptr [rdi + 1], 0
-    jne .open_regular_file
-
-    # Read from STDIN
-    mov rdi, STDIN_FD
+    # If no arguments, push 0 (stdin fd) and cat it
+    xor edi, edi
     call cat_fd
-    jmp .next_arg
+    jmp .exit
 
-.open_regular_file:
-    # sys_open(filename=rdi, flags=O_RDONLY, mode=0)
-    mov rax, SYS_OPEN
-    mov rsi, O_RDONLY
-    xor rdx, rdx
+.arg_loop:
+    pop rdi                # rdi = current argv[i] string pointer
+
+    # Check if argument is "-"
+    cmp word ptr [rdi], 0x002d   # '-' followed by null terminator '\0'
+    jne .open_file
+
+    xor edi, edi           # fd = 0 (stdin)
+    jmp .process_fd
+
+.open_file:
+    # sys_open(rdi, O_RDONLY=0, mode=0)
+    push SYS_OPEN
+    pop rax
+    xor esi, esi
+    xor edx, edx
     syscall
 
-    test rax, rax
-    js .open_error         # If negative, open failed
+    test eax, eax
+    js .next_arg           # Skip on error
 
-    mov r14, rax           # Save file descriptor
-    mov rdi, r14
+    mov edi, eax           # rdi = fd
+
+.process_fd:
+    push rdi               # Save fd for closing
     call cat_fd
+    pop rdi                # Restore fd
 
-    # sys_close(fd=r14)
-    mov rax, SYS_CLOSE
-    mov rdi, r14
+    test edi, edi          # If stdin (fd 0), do not close
+    jz .next_arg
+
+    # sys_close(fd=rdi)
+    push SYS_CLOSE
+    pop rax
     syscall
 
 .next_arg:
-    add r13, 8             # Move to next argv element
-    dec r12                # Decrement remaining arg count
-    jmp .arg_loop
+    dec ebx
+    jnz .arg_loop
 
-.read_stdin_only:
-    mov rdi, STDIN_FD
-    call cat_fd
-    jmp .exit_success
-
-.open_error:
-    # Print error message to stderr
-    mov rax, SYS_WRITE
-    mov rdi, STDERR_FD
-    lea rsi, [rip + err_msg]
-    mov rdx, ERR_MSG_LEN
-    syscall
-    jmp .next_arg
-
-.exit_success:
-    mov rax, SYS_EXIT
-    xor rdi, rdi           # exit code 0
+.exit:
+    push SYS_EXIT
+    pop rax
+    xor edi, edi
     syscall
 
 # -------------------------------------------------------------
-# cat_fd: Reads from file descriptor in RDI and writes to STDOUT
+# cat_fd: Read from fd in EDI, write to STDOUT (fd 1)
 # -------------------------------------------------------------
 cat_fd:
-    push rbx
-    mov rbx, rdi           # rbx = fd to read from
-
+    push rdi               # Save input fd
 .read_loop:
-    # sys_read(fd=rbx, buf=buffer, count=BUF_SIZE)
-    mov rax, SYS_READ
-    mov rdi, rbx
+    # sys_read(fd=[rsp], buf=buffer, BUF_SIZE)
+    xor eax, eax           # SYS_READ = 0
+    mov rdi, [rsp]
     lea rsi, [rip + buffer]
-    mov rdx, BUF_SIZE
+    mov edx, BUF_SIZE
     syscall
 
-    test rax, rax
-    jle .cat_fd_done       # If <= 0 (EOF or error), finish
+    test eax, eax
+    jle .done              # EOF or error
 
-    # sys_write(fd=STDOUT_FD, buf=buffer, count=bytes_read)
-    mov rdx, rax           # rdx = number of bytes read
-    mov rax, SYS_WRITE
-    mov rdi, STDOUT_FD
-    lea rsi, [rip + buffer]
+    # sys_write(STDOUT_FD=1, buf=buffer, count=eax)
+    mov edx, eax
+    push SYS_WRITE
+    pop rax
+    mov edi, eax           # STDOUT_FD = 1
     syscall
 
     jmp .read_loop
 
-.cat_fd_done:
-    pop rbx
+.done:
+    pop rdi
     ret
