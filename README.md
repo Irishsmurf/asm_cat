@@ -17,30 +17,32 @@ The entire standalone executable weighs in at just **417 bytes** while providing
 
 ---
 
-## 🛡️ Safety & Error Handling Features
+## 🛡️ Enterprise Robustness & Safety Features
 
-1. **Circular Read / Self-Append Protection**:
-   - Uses `sys_fstat` (syscall 5) to inspect the device ID (`st_dev`) and inode number (`st_ino`) of `stdout` against every input file.
-   - If attempting to read from the file being written to (e.g. `cat file.txt >> file.txt`), `asm_cat` aborts with:
+1. **Dynamic Filename & Error Diagnostics**:
+   - Computes string lengths dynamically and prints exact file paths on `stderr`:
      ```text
-     cat: input file is output file
-     ```
-     and exits with error code `1`.
-
-2. **Standard Diagnostics on `stderr` (FD 2)**:
-   - Missing or unreadable files produce descriptive errors:
-     ```text
-     cat: cannot open file
+     cat: /path/to/missing.txt: No such file or directory
+     cat: /root/secret: Permission denied
+     cat: /tmp: Is a directory
      ```
 
-3. **POSIX Error Status Exit Code**:
-   - Exits with `0` on complete success, or `1` if any file failed to open or encountered a circular dependency.
+2. **Circular Read / Self-Append Protection**:
+   - Uses `sys_fstat` (syscall 5) to check `st_dev` and `st_ino` on `stdout` vs every input file.
+   - If attempting `cat file.txt >> file.txt`, safely aborts with `cat: file.txt: input file is output file` and exit code `1`.
 
-4. **Zero-Copy In-Kernel Splicing (`sys_sendfile`, syscall 40)**:
+3. **POSIX End-of-Options Delimiter (`--`)**:
+   - Correctly parses `--` so files starting with a dash (e.g. `cat -- -dashed-name.txt`) are handled without collision.
+
+4. **Signal Resilience (`EINTR`) & Partial-Write Loop**:
+   - Automatically retries system calls on `-EINTR` signals (such as terminal resizing).
+   - Loops on partial writes to guarantee full data delivery over saturated pipes or network sockets.
+
+5. **Special `/proc` & `/sys` Dynamic Streaming**:
+   - Seamlessly streams 0-sized virtual kernel pseudo-files until true EOF.
+
+6. **Zero-Copy In-Kernel Splicing (`sys_sendfile`, syscall 40)**:
    - Transfers regular files directly within the Linux page cache at **>20 GB/s**.
-
-5. **64 KB High-Throughput Pipe Fallback**:
-   - Dynamically mapped BSS buffer for stdin pipes at 0 disk-size cost.
 
 ---
 

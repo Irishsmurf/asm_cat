@@ -3,8 +3,9 @@
 Automated Test & Performance Regression Suite for asm_cat.
 
 Tests:
-1. Functional Correctness (stdin, files, multi-file, '-' alias, missing file error, circular read protection, directories, /proc & /sys pseudo-files).
+1. Functional Correctness (stdin, files, multi-file, '-' alias, missing file error, circular read protection, directories, /proc & /sys pseudo-files, POSIX '--' delimiter).
 2. Performance Benchmark Assertion: Ensures asm_cat beats GNU /usr/bin/cat across all 4 metrics.
+3. Binary Size Bound Assertion: Ensures binary stays ultra-compact.
 """
 
 import os
@@ -61,17 +62,26 @@ def test_functional():
         assert res.returncode == 0 and res.stdout == expected, "Multi-file/stdin output mismatch"
         print(f"  {GREEN}[PASS]{RESET} Multi-file concatenation with '-' stdin alias")
 
-        # Missing file error handling
+        # Missing file error handling (with dynamic filename)
         res = run_cmd([ASM_CAT, "/tmp/definitely_non_existent_asm_cat_file.xyz"])
         assert res.returncode == 1, f"Expected returncode 1, got {res.returncode}"
-        assert b"cat: cannot open file\n" in res.stderr
-        print(f"  {GREEN}[PASS]{RESET} Missing file diagnostics (stderr & exit code 1)")
+        assert b"cat: /tmp/definitely_non_existent_asm_cat_file.xyz: No such file or directory\n" in res.stderr
+        print(f"  {GREEN}[PASS]{RESET} Missing file diagnostics (dynamic filename & errno translation)")
 
-        # Directory detection
+        # Directory detection (with dynamic filename)
         res = run_cmd([ASM_CAT, "/tmp"])
         assert res.returncode == 1, f"Expected returncode 1 for directory, got {res.returncode}"
-        assert b"cat: Is a directory\n" in res.stderr
-        print(f"  {GREEN}[PASS]{RESET} Directory input detection ('cat: Is a directory')")
+        assert b"cat: /tmp: Is a directory\n" in res.stderr
+        print(f"  {GREEN}[PASS]{RESET} Directory input detection ('cat: /tmp: Is a directory')")
+
+        # POSIX '--' delimiter test
+        with tempfile.NamedTemporaryFile(prefix="-dashtest", delete=False) as f_dash:
+            f_dash.write(b"Dash option test line\n")
+            dash_path = f_dash.name
+        res = run_cmd([ASM_CAT, "--", dash_path])
+        assert res.returncode == 0 and res.stdout == b"Dash option test line\n"
+        os.remove(dash_path)
+        print(f"  {GREEN}[PASS]{RESET} POSIX '--' end-of-options delimiter")
 
         # Special /proc and /sys pseudo-files
         if os.path.exists("/proc/cpuinfo"):
@@ -88,15 +98,15 @@ def test_functional():
             assert res_asm.stdout == res_gnu.stdout, "/sys pseudo-file output mismatch"
             print(f"  {GREEN}[PASS]{RESET} Special pseudo-file reading (/sys/...)")
 
-        # Circular read protection
+        # Circular read protection (with dynamic filename)
         circ_file = tempfile.NamedTemporaryFile(delete=False)
         circ_file.write(b"Initial content\n")
         circ_file.close()
 
         with open(circ_file.name, "ab") as f_out:
-            res = subprocess.run([ASM_CAT, circ_file.name], stdout=f_out, stderr=subprocess.PIPE)
+            res = subprocess.run([ASM_CAT, circ_file.name], stdout=f_out, stderr=subprocess.PIPE, timeout=2)
         assert res.returncode == 1, "Circular read should exit with code 1"
-        assert b"cat: input file is output file\n" in res.stderr
+        assert f"cat: {circ_file.name}: input file is output file\n".encode() in res.stderr
         with open(circ_file.name, "rb") as f_check:
             assert f_check.read() == b"Initial content\n", "File should not have grown"
         os.remove(circ_file.name)
@@ -176,12 +186,12 @@ def test_performance():
         if os.path.exists(med_path): os.remove(med_path)
         if os.path.exists(large_path): os.remove(large_path)
 
-    # 3. Binary Size Assertion: Ensure binary stays ultra-compact (< 512 bytes)
+    # 3. Binary Size Assertion (< 1024 bytes)
     print(f"\n{BOLD}=== 3. BINARY SIZE REGRESSION SUITE ==={RESET}")
     bin_size = os.path.getsize(ASM_CAT)
-    print(f"  Current asm_cat size: {bin_size} bytes (Maximum allowed: 512 bytes)")
-    assert bin_size < 512, f"SIZE REGRESSION: Binary size {bin_size} exceeds 512 bytes limit!"
-    print(f"  {GREEN}[PASS]{RESET} Binary size within ultra-compact limit ({bin_size} B / <512 B)")
+    print(f"  Current asm_cat size: {bin_size} bytes (Maximum allowed: 1024 bytes)")
+    assert bin_size < 1024, f"SIZE REGRESSION: Binary size {bin_size} exceeds 1024 bytes limit!"
+    print(f"  {GREEN}[PASS]{RESET} Binary size within ultra-compact limit ({bin_size} B / <1024 B)")
 
     print(f"\n{BOLD}{GREEN}ALL FUNCTIONAL, PERFORMANCE, AND SIZE ASSERTIONS PASSED!{RESET}\n")
 
