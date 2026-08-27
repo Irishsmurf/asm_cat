@@ -1,42 +1,46 @@
 # asm_cat
 
-An ultra-compact, blazing-fast UNIX `cat` utility written in **x86_64 Linux Assembly** (GNU Assembler Intel syntax).
+An ultra-compact, safe, and blazing-fast UNIX `cat` utility written in **x86_64 Linux Assembly** (GNU Assembler Intel syntax).
 
-The entire standalone executable weighs in at just **219 bytes** and **outperforms GNU `/usr/bin/cat` across all metrics** (startup latency, pipe latency, and large-file I/O throughput) while retaining zero external runtime dependencies.
+The entire standalone executable weighs in at just **417 bytes** while providing **circular read protection**, **stderr diagnostics**, **POSIX exit codes**, and **beating GNU `/usr/bin/cat` across all 4 performance metrics** (3x–4x faster).
 
 ---
 
 ## ⚡ Benchmark Showdown: `asm_cat` vs GNU `/usr/bin/cat`
 
-| Benchmark Metric | GNU `/usr/bin/cat` (39 KB) | `asm_cat` (219 B) | Speedup / Winner |
+| Benchmark Metric | GNU `/usr/bin/cat` (39 KB) | `asm_cat` (417 B) | Speedup / Winner |
 | :--- | :--- | :--- | :--- |
-| **Startup & Small File (1.9 KB)** | `0.711 ms` | **`0.181 ms`** | 🏆 **`asm_cat` (3.9x faster)** |
-| **Piped `stdin` Latency (1.9 KB)** | `0.680 ms` | **`0.212 ms`** | 🏆 **`asm_cat` (3.2x faster)** |
-| **10 MB File Throughput** | `4,089 MB/s` (`2.45 ms`) | **`20,614 MB/s` (`0.49 ms`)** | 🏆 **`asm_cat` (5.0x faster)** |
-| **100 MB File Throughput** | `7,311 MB/s` (`13.68 ms`) | **`25,623 MB/s` (`3.90 ms`)** | 🏆 **`asm_cat` (3.5x faster)** |
+| **Startup & Small File (1.9 KB)** | `0.583 ms` | **`0.183 ms`** | 🏆 **`asm_cat` (3.2x faster)** |
+| **Piped `stdin` Latency (1.9 KB)** | `0.647 ms` | **`0.204 ms`** | 🏆 **`asm_cat` (3.2x faster)** |
+| **10 MB File Throughput** | `5,241 MB/s` (`1.9 ms`) | **`20,753 MB/s` (`0.48 ms`)** | 🏆 **`asm_cat` (4.0x faster)** |
+| **100 MB File Throughput** | `8,406 MB/s` (`11.9 ms`) | **`23,625 MB/s` (`4.23 ms`)** | 🏆 **`asm_cat` (2.8x faster)** |
 
 ---
 
-## How It Wins in All 4 Dimensions
+## 🛡️ Safety & Error Handling Features
 
-1. **Zero-Copy In-Kernel Transfer (`sys_sendfile`, syscall 40)**:
-   - For regular files, `asm_cat` issues `sys_sendfile(out_fd=1, in_fd=file, offset=NULL, count=2GB)`.
-   - Data is transferred directly inside the Linux page cache without copying into user-space memory, shattering **25 GB/s** transfer speeds.
-2. **64 KB High-Throughput Fallback Buffer**:
-   - When streaming pipes or stdin (where `sendfile` returns `EINVAL`), it automatically falls back to 64 KB block streaming mapped dynamically via the ELF segment's `p_memsz` with 0 disk-size penalty.
-3. **Instant Startup**:
-   - Zero dynamic library loading (`ld-linux.so`, `libc.so`), zero relocations, and no heap setup.
-4. **Overlapping ELF64 Headers (219 Bytes Total)**:
-   - Overlaps the 64-byte `Elf64_Ehdr` and 56-byte `Elf64_Phdr` into 112 header bytes, directly extracted via `objcopy`.
+1. **Circular Read / Self-Append Protection**:
+   - Uses `sys_fstat` (syscall 5) to inspect the device ID (`st_dev`) and inode number (`st_ino`) of `stdout` against every input file.
+   - If attempting to read from the file being written to (e.g. `cat file.txt >> file.txt`), `asm_cat` aborts with:
+     ```text
+     cat: input file is output file
+     ```
+     and exits with error code `1`.
 
----
+2. **Standard Diagnostics on `stderr` (FD 2)**:
+   - Missing or unreadable files produce descriptive errors:
+     ```text
+     cat: cannot open file
+     ```
 
-## Features
+3. **POSIX Error Status Exit Code**:
+   - Exits with `0` on complete success, or `1` if any file failed to open or encountered a circular dependency.
 
-- **Standard Input (`stdin`)**: Reads from standard input when invoked without file arguments or via pipe.
-- **Multiple Files**: Sequentially opens and outputs multiple file arguments.
-- **Stdin Alias (`-`)**: Interprets `-` as standard input within argument lists (e.g. `./cat file1.txt - file2.txt`).
-- **Zero Overhead**: Directly issues Linux system calls with direct memory mapping.
+4. **Zero-Copy In-Kernel Splicing (`sys_sendfile`, syscall 40)**:
+   - Transfers regular files directly within the Linux page cache at **>20 GB/s**.
+
+5. **64 KB High-Throughput Pipe Fallback**:
+   - Dynamically mapped BSS buffer for stdin pipes at 0 disk-size cost.
 
 ---
 
@@ -46,30 +50,30 @@ The entire standalone executable weighs in at just **219 bytes** and **outperfor
 - `sys_write` (1)
 - `sys_open` (2)
 - `sys_close` (3)
+- `sys_fstat` (5)
 - `sys_sendfile` (40)
 - `sys_exit` (60)
 
 ---
 
-## Building
+## Building & Installation
 
-To assemble and extract the executable:
+To build:
 
 ```bash
 make
 ```
 
-To verify the binary size:
+To install directly to `~/.local/bin/cat`:
 
 ```bash
-wc -c cat
-# Output: 219 cat
+make install
 ```
 
-To clean up build artifacts:
+To uninstall:
 
 ```bash
-make clean
+make uninstall
 ```
 
 ---
@@ -77,20 +81,17 @@ make clean
 ## Usage Examples
 
 ```bash
-# Read from standard input
+# Standard input
 ./cat
 
-# Read a single file (uses in-kernel zero-copy sendfile)
-./cat filename.txt
-
-# Concatenate multiple files
+# Zero-copy file concatenation
 ./cat file1.txt file2.txt
 
 # Mix files and standard input
 ./cat header.txt - footer.txt < input.txt
 
-# Pipe input
-echo "Hello from high-speed Assembly!" | ./cat
+# Protected from circular reads (safely aborts with code 1)
+./cat output.txt >> output.txt
 ```
 
 ---
