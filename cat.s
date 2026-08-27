@@ -1,16 +1,6 @@
 # ==============================================================================
 # asm_cat: Ultra-compact, Enterprise-Grade, High-Performance UNIX 'cat' in x86_64 ASM
-#
-# Features:
-# 1. Zero-Copy In-Kernel sys_sendfile (syscall 40) for regular non-empty files (>25 GB/s).
-# 2. 64 KB dynamically mapped fallback buffer for pipes, stdin, /proc, and /sys.
-# 3. Dynamic Filename in Error Messages: "cat: <filename>: <error>"
-# 4. Accurate POSIX Error Translation (ENOENT, EACCES, EISDIR).
-# 5. POSIX End-of-Options Parsing ('--').
-# 6. Signal Interruption Resilience (EINTR).
-# 7. Partial-Write Loop for complete delivery.
-# 8. Circular Read / Self-Append Prevention.
-# 9. Overlapped ELF64 Headers (112 header bytes).
+# Size-optimized with deduplicated strings, shared syscall helpers, and dense encodings.
 # ==============================================================================
 
 .intel_syntax noprefix
@@ -88,7 +78,7 @@ code_entry:
     jne .check_stdin_dash
     cmp byte ptr [rdi + 2], 0       # '--\0' ?
     jne .check_stdin_dash
-    mov r9d, 1                      # Enable raw mode
+    inc r9d                         # Enable raw mode (r9d = 1)
     dec ebp
     jnz .arg_loop
     jmp .exit
@@ -150,29 +140,27 @@ code_entry:
     jmp .done_fd
 
 .open_error:
-    # eax has negative errno (-2 = ENOENT, -13 = EACCES, -21 = EISDIR)
+    # Negative errno in eax: -2=ENOENT, -13=EACCES, -21=EISDIR
     neg eax
-    lea rsi, [rip + msg_open]       # default: "cannot open file\n"
-    push 17
-    pop rdx
-    cmp eax, 2                      # ENOENT (No such file or directory)
-    jne 1f
     lea rsi, [rip + msg_noent]
     push 26
     pop rdx
-    jmp 3f
-1:  cmp eax, 13                     # EACCES (Permission denied)
-    jne 2f
+    cmp al, 2                       # ENOENT
+    je 2f
     lea rsi, [rip + msg_acces]
     push 18
     pop rdx
-    jmp 3f
-2:  cmp eax, 21                     # EISDIR (Is a directory)
-    jne 3f
+    cmp al, 13                      # EACCES
+    je 2f
     lea rsi, [rip + msg_dir]
     push 15
     pop rdx
-3:  call report_error
+    cmp al, 21                      # EISDIR
+    je 2f
+    lea rsi, [rip + msg_open]
+    push 17
+    pop rdx
+2:  call report_error
     jmp .next_file
 
 .stdin_entry:
@@ -197,7 +185,7 @@ code_entry:
     syscall
     test eax, eax
     jg .sendfile_loop               # Continue if transferred > 0
-    cmp eax, -4                     # -EINTR ?
+    cmp al, -4                      # -EINTR ?
     je .sendfile_loop               # Retry if interrupted by signal
     jns .done_fd                    # Clean EOF
 
@@ -210,7 +198,7 @@ code_entry:
     syscall
     test eax, eax
     jg .write_all                   # Read bytes -> write them
-    cmp eax, -4                     # -EINTR ?
+    cmp al, -4                      # -EINTR ?
     je .pipe_loop                   # Retry
     jmp .done_fd                    # EOF (0) or error (<0)
 
@@ -232,7 +220,7 @@ code_entry:
     jnz .write_subloop              # Loop until all bytes written
     jmp .pipe_loop
 
-1:  cmp eax, -4                     # -EINTR ?
+1:  cmp al, -4                      # -EINTR ?
     je .write_subloop               # Retry write on signal
     jmp .done_fd
 
@@ -272,50 +260,34 @@ report_error:
     mov r12d, 1                     # Set error status = 1
 
     # 1. Write "cat: "
-    push 1
-    pop rax
-    push 2
-    pop rdi
     lea rsi, [rip + msg_prefix]
     push 5
     pop rdx
-    syscall
+    call write_err
 
     # 2. Compute filename length (r8 = filename)
-    mov rdi, [rsp + 16]             # rdi = filename pointer
+    mov rdi, r8                     # rdi = filename pointer
     xor eax, eax
     or rcx, -1
     repne scasb
     not rcx
     dec rcx                         # rcx = strlen(filename)
-    mov rdx, rcx                    # rdx = length
 
     # Write filename
-    push 1
-    pop rax
-    push 2
-    pop rdi
-    mov rsi, [rsp + 16]             # rsi = filename
-    syscall
+    mov rsi, r8                     # rsi = filename
+    mov rdx, rcx                    # rdx = length
+    call write_err
 
     # 3. Write ": " separator
-    push 1
-    pop rax
-    push 2
-    pop rdi
     lea rsi, [rip + msg_colon]
     push 2
     pop rdx
-    syscall
+    call write_err
 
     # 4. Write specific error message
     mov rsi, [rsp + 24]             # rsi = error msg string
     mov rdx, [rsp + 32]             # rdx = error msg length
-    push 1
-    pop rax
-    push 2
-    pop rdi
-    syscall
+    call write_err
 
     pop rbx                         # Restore ebx
     pop rbp                         # Restore ebp
@@ -324,7 +296,15 @@ report_error:
     pop rdx                         # Clean msg length
     ret
 
-# String constants
+write_err:
+    push 1                          # SYS_WRITE = 1
+    pop rax
+    push 2                          # STDERR = 2
+    pop rdi
+    syscall
+    ret
+
+# Error String Constants
 msg_prefix:
     .ascii "cat: "
 
